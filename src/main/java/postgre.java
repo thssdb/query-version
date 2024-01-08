@@ -25,7 +25,7 @@ public class postgre {
     }
 
     public Connection initTimescale(int conn) throws SQLException {
-        String url = "jdbc:postgresql://localhost:5432/db1";
+        String url = "jdbc:postgresql://localhost:8080/db1";
         //Properties props = new Properties();
         //props.setProperty("user", "postgres");
         //props.setProperty("password", "postgrespw");
