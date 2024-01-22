@@ -9,6 +9,9 @@ public class SchemaDescriptor {
     public List<String> create = new ArrayList<>();
     public Map<String, List<String>> branches = new HashMap<>();
     public List<String> drop = new ArrayList<>();
+    public final int gen_base = 1; // higher, concurr better for align.
+    public final int step = 1;
+    public int inst = 2;
 
     public Map<Integer, List<Integer>> alignedSchema = new HashMap<>(); // for IoTDB, tsid -> schemaid in mainName.
 
@@ -31,6 +34,7 @@ public class SchemaDescriptor {
                 break;
                 }
             case "Ship": {
+                inst = 10;
                 switch (ev) {
                     case "Postgres":
                     case "Postgres-v": build_ship_postgres(); break;
@@ -51,6 +55,7 @@ public class SchemaDescriptor {
                 break;
             }
             case "Noise": {
+
                 switch (ev) {
                     case "Postgres":
                     case "Postgres-v": build_noise_postgres(); break;
@@ -131,8 +136,8 @@ public class SchemaDescriptor {
             mainName.add(sc);
             sc.attrName = List.copyOf(sc.attributes.keySet());
             String s = String.format(
-                    " (time integer not null, %s numeric(32, 4) not null, primary key(time) );",
-                    "K" + i);
+                    " (time integer not null, %s numeric(32, 4) not null );",
+                    "K" + i); //, primary key(time)
             create.add("create unlogged table " + sc.main + s);
             drop.add(String.format("drop table %s;", sc.main));
             branches.put(sc.main, new ArrayList<>());
@@ -142,7 +147,7 @@ public class SchemaDescriptor {
                 branches.get(sc.main).add(brh);
                 drop.add("drop table " + brh + ";");
             }
-            gen.add(i%inst + 1);
+            gen.add((i%inst)*step + gen_base);
         }
     }
 
@@ -187,11 +192,17 @@ public class SchemaDescriptor {
     }
 
     public void build_climate_influx() {
-
+        service_iotdb1attr("Climate", 4, 2);
     }
-    public void build_ship_influx() {}
-    public void build_btc_influx() {}
-    public void build_noise_influx() {}
+    public void build_ship_influx() {
+        service_iotdb1attr("Ship", 210, 10);
+    }
+    public void build_btc_influx() {
+        service_iotdb1attr("Bitcoin", 7, 2);
+    }
+    public void build_noise_influx() {
+        service_iotdb1attr("Noise", 4, 2);
+    }
 
     public void service_iotdb1attr(String prefix, int attr_num, int inst) {
         create.add("create database root;");

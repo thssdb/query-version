@@ -22,6 +22,9 @@ public class IoTDB extends benchmarks {
     public Session session;
     FileWriter wlog;
     public Map<String, Tablet> repair = new HashMap<>();
+    int scale_count = 0;
+    double param = 0;
+    boolean gen_update_only = false;
 
     @Override
     public void create() throws SQLException, IoTDBConnectionException, StatementExecutionException {
@@ -50,7 +53,7 @@ public class IoTDB extends benchmarks {
     }
 
     @Override
-    public void init(int num_branch, String dataset, String ev) throws SQLException, IoTDBConnectionException {
+    public void init(int num_branch, DataSet dataset, String ev) throws SQLException, IoTDBConnectionException {
         constants = new Constants(num_branch, dataset, "IoTDB");
         session = new Session.Builder().host("127.0.0.1").port(6667).build();
         session.open();
@@ -68,6 +71,10 @@ public class IoTDB extends benchmarks {
 
     @Override
     public void insertDataPrepare(String path, int length, double upd, double delay, double dup, int verbose) throws IOException, SQLException, IoTDBConnectionException, StatementExecutionException {
+        if(path.equals(constants.path_noise)) {
+            insertDataPrepare_gene(length, upd, delay, dup, verbose);
+            return;
+        }
         Random rd = new Random();
         Deque<Pair<String, Pair<Long, Integer>>> delayed = new LinkedList<>();
         Scanner sc = new Scanner(new File(path));
@@ -87,7 +94,7 @@ public class IoTDB extends benchmarks {
             timestamp.put(schema.main, new ArrayList<>());
             data.put(schema.main, new ArrayList<>());
         }
-        int pos = 0;
+        int pos = 1;
         while (sc.hasNext() && pos < length) {
             String line = sc.nextLine();
             String[] s = line.split(",");
@@ -95,12 +102,16 @@ public class IoTDB extends benchmarks {
                 Schema schema = constants.descriptor.mainName.get(i);
                 for(String attr: schema.attributes.keySet()) {
                     int toInsert;
+//                    if(rd.nextDouble() < param) continue;
+                    String reads  = "";
+                    if(s.length > schema.attributes.get(attr)) reads = s[schema.attributes.get(attr)];
+                    if(reads.isEmpty()) reads = "0";
                     if(schema.types.get(attr) == Type.INT) {
-                        int x = Integer.parseInt(s[schema.attributes.get(attr)]);
+                        int x = Integer.parseInt(reads);
                         vr.get(schema.main).update(x);
                         toInsert = x*10000;
                     } else {
-                        float x = Float.parseFloat(s[schema.attributes.get(attr)]);
+                        float x = Float.parseFloat(reads);
                         vr.get(schema.main).update(x);
                         toInsert = (int) (x*10000);
                     }
@@ -127,6 +138,7 @@ public class IoTDB extends benchmarks {
                 }
             }
             pos++;
+
         }
         while(!delayed.isEmpty()) {
             Pair<String, Pair<Long, Integer>> exec = delayed.pollFirst();
@@ -140,14 +152,22 @@ public class IoTDB extends benchmarks {
         for(int i=0;i< constants.descriptor.mainName.size();i++) {
             Schema schema = constants.descriptor.mainName.get(i);
             constants.timeRange.put(schema.main, Range.createRange(0, constants.descriptor.gen.get(i) * pos));
-            session.insertTablet(
-                    construct(schema, "main",
-                            timestamp.get(schema.main), data.get(schema.main), false));
-            for(String branchx: schema.measurements) {
+            if(!gen_update_only) {
                 session.insertTablet(
-                        construct(schema, branchx,
-                                timestamp.get(schema.deviceId + "." + branchx),
-                                data.get(schema.deviceId + "." + branchx), true), false);
+                        construct(schema, "main",
+                                timestamp.get(schema.main), data.get(schema.main), false));
+            }
+            for(String branchx: schema.measurements) {
+                if(!gen_update_only) {
+//                    session.insertTablet(
+//                            construct(schema, branchx,
+//                                    timestamp.get(schema.deviceId + "." + branchx),
+//                                    data.get(schema.deviceId + "." + branchx), true), false);
+                } else {
+                    construct(schema, branchx,
+                            timestamp.get(schema.deviceId + "." + branchx),
+                            data.get(schema.deviceId + "." + branchx), true);
+                }
             }
         }
     }
@@ -191,6 +211,7 @@ public class IoTDB extends benchmarks {
             for(int i=0;i< constants.descriptor.mainName.size();i++) {
                 Schema schema = constants.descriptor.mainName.get(i);
                 for(String attr: schema.attributes.keySet()) {
+                    if(rd.nextDouble() < 0.75) continue;
                     int toInsert;
                     if(schema.types.get(attr) == Type.INT) {
                         int x = rd.nextInt();
@@ -201,7 +222,8 @@ public class IoTDB extends benchmarks {
                         vr.get(schema.main).update(x);
                         toInsert = (int) (x*10000);
                     }
-                    long timex = constants.descriptor.gen.get(i)*pos;
+
+                    long timex = constants.descriptor.gen.get(i)* (pos + scale_count);
                     if((verbose & 1) == 1) {
                         if(rd.nextDouble() < delay) {
                             delayed.add(new Pair<>(schema.main, new Pair<>(timex, toInsert)));
@@ -225,6 +247,7 @@ public class IoTDB extends benchmarks {
             }
             pos++;
         }
+        scale_count += pos;
         while(!delayed.isEmpty()) {
             Pair<String, Pair<Long, Integer>> exec = delayed.pollFirst();
             if((verbose & 1) == 1) {
@@ -237,14 +260,22 @@ public class IoTDB extends benchmarks {
         for(int i=0;i< constants.descriptor.mainName.size();i++) {
             Schema schema = constants.descriptor.mainName.get(i);
             constants.timeRange.put(schema.main, Range.createRange(0, constants.descriptor.gen.get(i) * pos));
-            session.insertTablet(
-                    construct(schema, "main",
-                            timestamp.get(schema.main), data.get(schema.main), false), true);
-            for(String branchx: schema.measurements) {
+            if(!gen_update_only) {
                 session.insertTablet(
-                        construct(schema, branchx,
-                                timestamp.get(schema.deviceId + "." + branchx),
-                                data.get(schema.deviceId + "." + branchx), true), true);
+                        construct(schema, "main",
+                                timestamp.get(schema.main), data.get(schema.main), false));
+            }
+            for(String branchx: schema.measurements) {
+                if(!gen_update_only) {
+//                    session.insertTablet(
+//                            construct(schema, branchx,
+//                                    timestamp.get(schema.deviceId + "." + branchx),
+//                                    data.get(schema.deviceId + "." + branchx), true), false);
+                } else {
+                    construct(schema, branchx,
+                            timestamp.get(schema.deviceId + "." + branchx),
+                            data.get(schema.deviceId + "." + branchx), true);
+                }
             }
         }
     }
@@ -429,6 +460,11 @@ public class IoTDB extends benchmarks {
     }
 
     @Override
+    public void alignPartialReading(List<Schema> tableMain, int attrs) throws SQLException, IoTDBConnectionException, StatementExecutionException {
+
+    }
+
+    @Override
     public void execute(BenchFunctions benchFunctions) throws Exception {
 
     }
@@ -440,24 +476,30 @@ public class IoTDB extends benchmarks {
     @Override
     public void execute() throws Exception {
         long rat = System.currentTimeMillis()%10000;
-        String fres = constants.RES_PREFIX + "IoTDB-" + rat + constants.dataset + constants.RES_POSTFIX;
+        String fres = constants.RES_PREFIX + "IoTDB-dup" + rat + constants.dataset + constants.RES_POSTFIX;
         String flog = constants.LOG_PREFIX + "IoTDB-" + rat + constants.dataset + constants.LOG_POSTFIX;
         FileWriter wres = new FileWriter(new File(fres));
         wlog = new FileWriter(new File(flog));
         System.out.println("Saved as " + fres);
         for(BenchFunctions bf: constants.BENCHMARK_CODE) {
             wlog.write(bf.name() + " ");
-            int ti = 5;
-            if(bf == BenchFunctions.VALUE_JOIN) ti = 2;
+            int ti = 2;
+//            if(bf == BenchFunctions.VALUE_JOIN) ti = 2;
+            try {
+//                this.clean();
+            } catch (Exception e) {
+                System.err.println(e);
+                //System.exit(-1);
+            }
+            try {
+                this.insertDataPrepare(this.constants.getDatasetPath(), 8400000, 0.1, 0, 0, 1);
+//                    this.insertDataPrepare(8400000, 0.10, 0, 0, 1);
+            } catch (Exception e) {
+                System.err.println(e);
+                //System.exit(-1);
+            }
             long cost = 0;
             for(int i=0;i<ti;i++) {
-                try {
-                    this.clean();
-                    this.insertDataPrepare(this.constants.path_climate, 100000, 0.10, 0, 0, 1);
-                } catch (Exception e) {
-                    System.err.println(e);
-                    //System.exit(-1);
-                }
                 long now = System.currentTimeMillis();
                 switch (bf) {
                     case ALIGN: align(constants.descriptor.mainName); break;
@@ -475,6 +517,7 @@ public class IoTDB extends benchmarks {
             cost /= ti;
             System.out.println(cost);
             wres.write(String.valueOf(cost) + " ");
+//            this.clean();
         }
         wlog.close();
         wres.close();
@@ -482,14 +525,51 @@ public class IoTDB extends benchmarks {
 
     public static void benchmarking() throws Exception {
         IoTDB ioTDB = new IoTDB();
-        ioTDB.init(1, "Climate", "IoTDB");
-        // ioTDB.registerCoalesce(); // execute once.
-
+        ioTDB.init(1, DataSet.Noise, "IoTDB");
+        ioTDB.gen_update_only  = true;
+        ioTDB.insertDataPrepare(ioTDB.constants.getDatasetPath(), 100000000, 0.1, 0, 0, 1);
+        ioTDB.constants.SELECTIVITY = 1.0;
         ioTDB.execute();
+        // ioTDB.registerCoalesce(); // execute once.
 //        ioTDB.clean();
+//        try {
+//            ioTDB.clean();
+//        } catch (Exception e) {
+//            System.err.println(e);
+//            //System.exit(-1);
+//        }
+//        try {
+//            for(int i=1;i<=20;i++) {
+//                ioTDB.constants.SELECTIVITY = i*0.05;
+//                ioTDB.execute();
+//            }
+//
+////            for(int i=0;i<10;i++) {
+////                ioTDB.insertDataPrepare_gene(1000000, 0.1, 0, 0.1, 1);
+////
+//////                ioTDB.repair = new HashMap<>();
+////            }
+//            ioTDB.clean();
+//        } catch (Exception e) {
+//            System.err.println(e);
+//            //System.exit(-1);
+//        }
+////        ioTDB.execute();
+////        ioTDB.clean();
+////        for(int i=1;i<=20;i++) {
+////            ioTDB.constants.SELECTIVITY = i*0.05;
+////            ioTDB.execute();
+////        }
     }
 
     public static void main(String[] args) throws Exception {
         benchmarking();
+//        IoTDBV ioTDB = new IoTDBV();
+//        ioTDB.init(1, DataSet.Climate, "IoTDB");
+//        try {
+//            ioTDB.clean();
+//        } catch (Exception e) {
+//
+//        }
     }
 }

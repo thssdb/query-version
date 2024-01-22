@@ -24,4 +24,8 @@ public class Range {
     public static Range createRange(double l, double r) {
         return new Range(l, r);
     }
+
+    public static Range intersect(Range a, Range b) {
+        return new Range(Double.max(a.left, b.left), Double.min(a.right, b.right));
+    }
 }

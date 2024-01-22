@@ -1,4 +1,6 @@
 
+import org.apache.iotdb.rpc.IoTDBConnectionException;
+import org.apache.iotdb.rpc.StatementExecutionException;
 import org.apache.iotdb.tsfile.utils.Pair;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
@@ -8,15 +10,24 @@ import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
+
+/**
+ * docker run --name postgres -e -e POSTGRES_PASSWORD=postgres -d postgres
+ * docker exec -it postgres psql -U postgres
+ * create database db;
+ * \c db
+ */
 public class Postgres extends benchmarks {
     public Constants constants;
     public Connection db;
+    public double param;
 
     public ConcurrentLinkedDeque<String> insert_stmt = new ConcurrentLinkedDeque<>();
     public ConcurrentLinkedDeque<String> upd_stmt = new ConcurrentLinkedDeque<>();
     FileWriter wlog;
 //    public Map<String, Long> updateTime = new HashMap<>(); // for fair comparison
     long upd_tme = 0;
+    int scale_count = 0;
 
     // need thread safe.
 
@@ -41,8 +52,8 @@ public class Postgres extends benchmarks {
     }
 
     @Override
-    public void init(int num_branch, String dataset, String ev) throws SQLException {
-        String url = "jdbc:postgresql://localhost:8080/db?user=postgres&password=postgres";
+    public void init(int num_branch, DataSet dataset, String ev) throws SQLException {
+        String url = "jdbc:postgresql://localhost:5432/db?user=postgres&password=postgres";
         db = DriverManager.getConnection(url);
         constants = new Constants(num_branch, dataset, ev);
     }
@@ -122,14 +133,113 @@ public class Postgres extends benchmarks {
                 StringBuilder repair = new StringBuilder();
                 value.append(constants.descriptor.gen.get(i) * pos);
                 repair.append(constants.descriptor.gen.get(i) * pos);
+                int minus = 0;
                 for(String attr: schema.attributes.keySet()) {
+                    String reads = "0";
+                    if(rd.nextDouble() < param) {
+                        minus = 1;
+                        continue;
+                    }
+                    if(s.length > schema.attributes.get(attr)) reads = s[schema.attributes.get(attr)];
+                    if(reads.isEmpty()) reads = "0";
                     if(schema.types.get(attr) == Type.INT) {
-                        int x = Integer.parseInt(s[schema.attributes.get(attr)]);
+                        int x = Integer.parseInt(reads);
                         vr.get(attr).update(x);
                         repair.append(", ").append(x + 1);
-                        value.append(", ").append(s[schema.attributes.get(attr)]);
+                        value.append(", ").append(reads);
                     } else {
-                        float x = Float.parseFloat(s[schema.attributes.get(attr)]);
+                        float x = Float.parseFloat(reads);
+                        vr.get(attr).update(x);
+                        repair.append(", ").append(String.format("%.4f", x*2.0f));
+                        value.append(", ").append(String.format("%.4f", x));
+                    }
+                }
+                //value.append(") on conflict (time) do nothing;");
+                //repair.append(") on conflict (time) do nothing;");
+                if((verbose & 1) == 1 && minus == 0) {
+                    if(rd.nextDouble() < delay) {
+                        delayed.add(new Pair<>(i, value + "\n"));
+                    } else {
+                        fws.get(i).write(value + "\n");
+//                        Statement st = db.createStatement();
+//                        st.executeUpdate(ins + value);
+//                        insert_stmt.add(ins + value);
+                    }
+                }
+                //else System.out.println(ins+value);
+                if(rd.nextDouble() < upd && minus == 0) {
+                    fwr.get(i).write(repair + "\n");
+//                    String updateTablex = SchemaDescriptor.random_select_update_table(constants.descriptor.branches.get(schema.main));
+//                    String inu = "insert into " + updateTablex;
+//                    upd_stmt.add(inu + repair);
+                }
+                if(rd.nextDouble() < dup) {
+                    if((verbose & 1) == 1) {
+//                        fws.get(i).write(value + "\n");
+//                        Statement st = db.createStatement();
+//                        st.executeUpdate(ins + value);
+//                        insert_stmt.add(ins + value);
+                    }
+                    else System.out.println(ins+value);
+                }
+            }
+            pos++;
+        }
+        for(int i=0;i< constants.descriptor.mainName.size();i++) {
+            Schema schema = constants.descriptor.mainName.get(i);
+            constants.timeRange.put(schema.main, Range.createRange(0, constants.descriptor.gen.get(i) * pos));
+        }
+        while(!delayed.isEmpty()) {
+            Pair<Integer, String> exec = delayed.pollFirst();
+            if((verbose & 1) == 1) {
+                fws.get(exec.left).write(exec.right);
+//                Statement st = db.createStatement();
+//                st.executeUpdate(exec);
+//                insert_stmt.add(exec);
+            }
+            else System.out.println(exec);
+        }
+        for(int i=0;i< constants.descriptor.mainName.size();i++) {
+            fws.get(i).close();
+            fwr.get(i).close();
+        }
+        constants.valueRange = vr;
+    }
+
+    @Override
+    public void insertDataPrepare_gene(int length, double upd, double delay, double dup, int verbose) throws SQLException, IOException {
+        Random rd = new Random();
+        Deque<Pair<Integer, String>> delayed = new LinkedList<>();
+        Map<String, Range> vr = new HashMap<>(); // guarantee unique colname
+        List<FileWriter> fws = new ArrayList<>();
+        List<FileWriter> fwr = new ArrayList<>();
+        for(int i=0;i< constants.descriptor.mainName.size();i++) {
+            Schema schema = constants.descriptor.mainName.get(i);
+            fws.add(new FileWriter(new File(constants.DATA_PREFIX + schema.main + constants.DATA_SUFFIX)));
+            for(String attr: schema.attrName) {
+                vr.put(attr, new Range(Double.MAX_VALUE, Double.MIN_VALUE));
+            }
+            for(String branch: constants.descriptor.branches.get(schema.main)) {
+                fwr.add(new FileWriter(new File(constants.DATA_PREFIX + branch + constants.REPAIR_DATA_SUFFIX)));
+            }
+        }
+        int pos = 0;
+        while (pos < length) {
+            for(int i=0;i< constants.descriptor.mainName.size();i++) {
+                Schema schema = constants.descriptor.mainName.get(i);
+                String ins = "insert into " + schema.main + " values (";
+                StringBuilder value = new StringBuilder();
+                StringBuilder repair = new StringBuilder();
+                value.append(constants.descriptor.gen.get(i) * (pos + scale_count));
+                repair.append(constants.descriptor.gen.get(i) * (pos + scale_count));
+                for(String attr: schema.attributes.keySet()) {
+                    if(schema.types.get(attr) == Type.INT) {
+                        int x = rd.nextInt();
+                        vr.get(attr).update(x);
+                        repair.append(", ").append(x + 1);
+                        value.append(", ").append(x);
+                    } else {
+                        float x = rd.nextFloat();
                         vr.get(attr).update(x);
                         repair.append(", ").append(String.format("%.4f", x*2.0f));
                         value.append(", ").append(String.format("%.4f", x));
@@ -165,9 +275,10 @@ public class Postgres extends benchmarks {
             }
             pos++;
         }
+        scale_count += pos;
         for(int i=0;i< constants.descriptor.mainName.size();i++) {
             Schema schema = constants.descriptor.mainName.get(i);
-            constants.timeRange.put(schema.main, Range.createRange(0, constants.descriptor.gen.get(i) * pos));
+            constants.timeRange.put(schema.main, Range.createRange(0, constants.descriptor.gen.get(i) * (pos + scale_count)));
         }
         while(!delayed.isEmpty()) {
             Pair<Integer, String> exec = delayed.pollFirst();
@@ -187,83 +298,6 @@ public class Postgres extends benchmarks {
     }
 
     @Override
-    public void insertDataPrepare_gene(int length, double upd, double delay, double dup, int verbose) throws SQLException {
-        Random rd = new Random();
-        Deque<String> delayed = new LinkedList<>();
-        Map<String, Range> vr = new HashMap<>(); // guarantee unique colname
-        for(int i=0;i< constants.descriptor.mainName.size();i++) {
-            Schema schema = constants.descriptor.mainName.get(i);
-            for(String attr: schema.attributes.keySet()) {
-                vr.put(attr, new Range(Double.MAX_VALUE, Double.MIN_VALUE));
-            }
-        }
-        int pos = 0;
-        while (pos < length) {
-            for(int i=0;i< constants.descriptor.mainName.size();i++) {
-                Schema schema = constants.descriptor.mainName.get(i);
-                String ins = "insert into " + schema.main;
-                StringBuilder value = new StringBuilder(" values (");
-                StringBuilder repair = new StringBuilder(" values (");
-                value.append(constants.descriptor.gen.get(i) * pos);
-                repair.append(constants.descriptor.gen.get(i) * pos);
-                for(String attr: schema.attributes.keySet()) {
-                    if(schema.types.get(attr) == Type.INT) {
-                        Integer x = rd.nextInt();
-                        value.append(", ").append(x);
-                        repair.append(", ").append(x + 1);
-                        vr.get(attr).update(x);
-                    } else {
-                        Float x = rd.nextFloat();
-                        value.append(", ").append(x);
-                        repair.append(", ").append(x * 2.0f);
-                        vr.get(attr).update(x);
-                    }
-                }
-                value.append(") on conflict (time) do nothing;");
-                repair.append(") on conflict (time) do nothing;");
-                if((verbose & 1) == 1) {
-                    if(rd.nextDouble() < delay) {
-                        delayed.add(ins+value);
-                    } else {
-                        Statement st = db.createStatement();
-                        st.executeUpdate(ins + value);
-//                        insert_stmt.add(ins + value);
-                    }
-                }
-                else System.out.println(ins+value);
-                if(rd.nextDouble() < upd) {
-                    String updateTablex = SchemaDescriptor.random_select_update_table(constants.descriptor.branches.get(schema.main));
-                    String inu = "insert into " + updateTablex;
-                    upd_stmt.add(inu + repair);
-                }
-                if(rd.nextDouble() < dup) {
-                    if((verbose & 1) == 1) {
-//                        Statement st = db.createStatement();
-//                        st.executeUpdate(ins + value);
-                        insert_stmt.add(ins + value);
-                    }
-                    else System.out.println(ins+value);
-                }
-            }
-            pos++;
-        }
-        for(int i=0;i< constants.descriptor.mainName.size();i++) {
-            Schema schema = constants.descriptor.mainName.get(i);
-            constants.timeRange.put(schema.main, Range.createRange(0, constants.descriptor.gen.get(i) * pos));
-        }
-        while(!delayed.isEmpty()) {
-            String exec = delayed.pollFirst();
-            if((verbose & 1) == 1) {
-                Statement st = db.createStatement();
-                st.executeUpdate(exec);
-//                insert_stmt.add(exec);
-            }
-            else System.out.println(exec);
-        }
-        constants.valueRange = vr;
-    }
-
-    @Override
     public void update(List<Schema> main) throws SQLException {
         // merge + series reading. limit branch 1
         for(Schema schema: main) {
@@ -277,8 +311,8 @@ public class Postgres extends benchmarks {
     @Override
     public void update(Schema main) throws SQLException {
         Statement st = db.createStatement();
-        st.executeQuery("select m.time, coalesce(u.A, m.A) from " +
-                main.main + " as m full outer join " + constants.descriptor.branches.get(main.main).get(0) + " as u;");
+//        st.executeQuery("select m.time, coalesce(u.A, m.A) from " +
+//                main.main + " as m full outer join " + constants.descriptor.branches.get(main.main).get(0) + " as u;");
         st.close();
     }
 
@@ -296,6 +330,28 @@ public class Postgres extends benchmarks {
                 constants.descriptor.branches.get(tableMain1.main).get(0),
                 tableMain2.attrName.get(0), tableMain2.attrName.get(0), tableMain2.main,
                 constants.descriptor.branches.get(tableMain2.main).get(0));
+//        int ub = 0; boolean inFirst = true;
+//        if(constants.timeRange.get(tableMain1.main).right > constants.timeRange.get(tableMain2.main).right) {
+//            ub = (int)(constants.timeRange.get(tableMain2.main).right); inFirst = false;
+//        } else ub = (int)(constants.timeRange.get(tableMain1.main).right);
+//        if(inFirst) {
+//            sb.append("select * from ")
+//                    .append("(select m.time time1, coalesce(u.%s, m.%s) A from %s m left outer join %s u on m.time=u.time where m.time < " + ub + ")")
+//                    .append(" join ")
+//                    .append("(select x.time time2, coalesce(y.%s, x.%s) B from %s x left outer join %s y on x.time=y.time)")
+//                    .append(" on time1 = time2;");
+//        } else {
+//            sb.append("select * from ")
+//                    .append("(select m.time time1, coalesce(u.%s, m.%s) A from %s m left outer join %s u on m.time=u.time)")
+//                    .append(" join ")
+//                    .append("(select x.time time2, coalesce(y.%s, x.%s) B from %s x left outer join %s y on x.time=y.time where x.time < " + ub + ")")
+//                    .append(" on time1 = time2;");
+//        }
+//        String sql = String.format(sb.toString(),
+//                tableMain1.attrName.get(0), tableMain1.attrName.get(0), tableMain1.main,
+//                constants.descriptor.branches.get(tableMain1.main).get(0),
+//                tableMain2.attrName.get(0), tableMain2.attrName.get(0), tableMain2.main,
+//                constants.descriptor.branches.get(tableMain2.main).get(0));
         //System.out.println(sql);
         st.executeQuery(sql);
         st.close();
@@ -482,7 +538,7 @@ public class Postgres extends benchmarks {
                         "from %s m full outer join %s u on m.time=u.time), R2 as ")
                 .append("(select x.time time, coalesce(y.%s, x.%s) A " +
                         "from %s x full outer join %s y on x.time=y.time) ")
-                .append("select R1.time t1, R2.time t2, R1.A A1, R2.A A2 from R1, R2 where R1.A=R2.A;");
+                .append("select R1.time t1, R2.time t2, R1.A A1, R2.A A2 from R1, R2 where R1.time=R2.time and R1.A=R2.A;");
         String sql = String.format(sb.toString(),
                 tableMain1.attrName.get(0), tableMain1.attrName.get(0),
                 tableMain1.main,
@@ -564,16 +620,22 @@ public class Postgres extends benchmarks {
     }
 
     @Override
+    public void alignPartialReading(List<Schema> tableMain, int attrs) throws SQLException, IoTDBConnectionException, StatementExecutionException {
+
+    }
+
+    @Override
     public void execute() throws Exception {
-        String fres = constants.RES_PREFIX + "Postgres-" + System.currentTimeMillis()%10000 + constants.dataset + constants.RES_POSTFIX;
-        String flog = constants.LOG_PREFIX + "Postgres-" + System.currentTimeMillis()%10000 + constants.dataset + constants.LOG_POSTFIX;
+        long rat = System.currentTimeMillis()%10000;
+        String fres = constants.RES_PREFIX + "Postgres-" + rat + constants.dataset + constants.RES_POSTFIX;
+        String flog = constants.LOG_PREFIX + "Postgres-" + rat + constants.dataset + constants.LOG_POSTFIX;
         FileWriter wres = new FileWriter(new File(fres));
         wlog = new FileWriter(new File(flog));
-        System.out.println("Saved as " + fres);
+        System.out.println("Saved as " + fres + " " + System.currentTimeMillis());
         for(BenchFunctions bf: constants.BENCHMARK_CODE) {
-            wlog.write(bf.name() + " ");
-            int ti = 5;
-            if(bf == BenchFunctions.VALUE_JOIN) ti = 2;
+            wlog.write(bf.name() + " " + System.currentTimeMillis());
+            int ti = 1;
+//            if(bf == BenchFunctions.VALUE_JOIN) ti = 2;
             long now = System.currentTimeMillis();
             for(int i=0;i<ti;i++) {
                 switch (bf) {
@@ -588,9 +650,9 @@ public class Postgres extends benchmarks {
                     default:
                 }
             }
-            long cost = (System.currentTimeMillis() - now)/ti + upd_tme;
+            long cost = (System.currentTimeMillis() - now)/ti;// + upd_tme;
             System.out.println(cost);
-            wres.write(String.valueOf(cost) + " ");
+            wres.write(String.valueOf(cost)+ " ");
         }
         wlog.close();
         wres.close();
@@ -603,26 +665,58 @@ public class Postgres extends benchmarks {
 
     public static void benchmarking() throws Exception {
         Postgres pg = new Postgres();
-        pg.init(1, "Climate", "Postgres");
+        pg.init(1, DataSet.Climate, "Postgres");
         try {
             pg.clean();
+        } catch (Exception e) {
+            System.err.println(e);
+            //System.exit(-1);
+        }
+//        pg.create();
+        for(double ratx: new double[]{0.50, 0.75, 0.875, 0.9375}) {
             pg.create();
-            //Integer.MAX_VALUE
-            pg.insertDataPrepare(pg.constants.path_climate, 100000, 0.10, 0, 0, 1);
-//            System.out.println("Generated insert data.");
+            pg.param = ratx;
+            pg.insertDataPrepare(pg.constants.getDatasetPath(), Integer.MAX_VALUE,
+                    0.10, 0, 0.0, 1);
             pg.insertCSV();
+            pg.execute();
+            try {
+                pg.clean();
+            } catch (Exception e) {
+                System.err.println(e);
+                //System.exit(-1);
+            }
+        }
+        try {
+//            pg.clean();
 
+            //Integer.MAX_VALUE
+//            pg.insertDataPrepare(pg.constants.getDatasetPath(), Integer.MAX_VALUE, 0.10, 0, 0, 1);
+//            for(int i=0;i<10;i++) {
+//                pg.insertDataPrepare_gene(10000000, 0.10, 0, 0, 1);
+//                pg.insertCSV();
+//                pg.execute();
+//            }
         } catch (Exception e) {
 //            pg.clean();
             System.err.println(e);
-            System.exit(-1);
+//            System.exit(-1);
         }
-        pg.execute();
+//        pg.execute();
+//        pg.clean();
     }
 
 
     public static void main(String[] args) throws Exception {
         benchmarking();
         //pg.clean();
+        Postgres pg = new Postgres();
+        pg.init(1, DataSet.Climate, "Postgres");
+        try {
+            pg.clean();
+        } catch (Exception e) {
+            System.err.println(e);
+            //System.exit(-1);
+        }
     }
 }

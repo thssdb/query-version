@@ -15,33 +15,60 @@ public class Constants {
     public String REPAIR_DATA_SUFFIX = "-repair.csv";
     public BenchFunctions[] BENCHMARK_CODE =
             {
-                    BenchFunctions.ALIGN,
-                    BenchFunctions.VALUE_FILTER,
-                    BenchFunctions.RANGE_FILTER,
-                    BenchFunctions.DOWNSAMPLE,
-                    BenchFunctions.DOWNSAMPLE_ALIGN,
-                    BenchFunctions.DOWNSAMPLE_UNION,
-                    BenchFunctions.VALUE_JOIN,
-                    BenchFunctions.BRANCH_ALIGN,
-//                    BenchFunctions.UPDATE
+//                    BenchFunctions.UPDATE,
+//                    BenchFunctions.ALIGN,
+//                    BenchFunctions.VALUE_FILTER,
+//                    BenchFunctions.RANGE_FILTER,
+//                    BenchFunctions.DOWNSAMPLE,
+//                    BenchFunctions.DOWNSAMPLE_ALIGN,
+//                    BenchFunctions.DOWNSAMPLE_UNION,
+//                    BenchFunctions.VALUE_JOIN,
+//                    BenchFunctions.BRANCH_ALIGN,
+                    BenchFunctions.ALIGN_PARTIAL
+
             };
-    public double SELECTIVITY = 0.50;
+    public BenchFunctions[] VARY_ATTR =
+            {
+                    BenchFunctions.VARY_ATTR
+            };
+
+    public double[] ratio =
+            {
+                    0.10, 0.30, 0.50, 0.70
+            };
+
+    public double SELECTIVITY =  0.01;
     public int WINDOW = 100;
     public SchemaDescriptor descriptor;
     public String dataset;
     public String path_climate = "E://projects/iotdb/dataset/Climate/climate_sc/iot.climate.csv";
     public String path_ship = "E://projects/iotdb/dataset/Ship/iot.ship.csv";
     public String path_btc = "E://projects/iotdb/dataset/Open.Bitcoin/bitcoin.csv";
+    public String path_noise = "GEN!";
 
     public String IoTDB_DATABASE;
     public String IoTDB_AGG_INTO = "AGG";
+    DataSet datax;
+    public int partial_align = 1;
 
 
-    Constants (int branch_num, String dataset, String ev) {
-        descriptor = new SchemaDescriptor(branch_num, dataset, ev);
+
+    Constants (int branch_num, DataSet dataset, String ev) {
+        descriptor = new SchemaDescriptor(branch_num, dataset.name(), ev);
         timeRange = new HashMap<>();
         valueRange = new HashMap<>();
-        this.dataset = dataset;
+        this.dataset = dataset.name();
         IoTDB_DATABASE = "root." + dataset;
+        datax = dataset;
+    }
+
+    public String getDatasetPath() {
+        switch (datax) {
+            case Climate: return path_climate;
+            case Ship: return path_ship;
+            case Bitcoin: return path_btc;
+            case Noise: return path_noise;
+        }
+        return "";
     }
 }

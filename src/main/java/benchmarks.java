@@ -9,11 +9,11 @@ import java.util.List;
 public abstract class benchmarks {
     public abstract void create() throws SQLException, IoTDBConnectionException, StatementExecutionException;
     public abstract void clean() throws SQLException, IoTDBConnectionException, StatementExecutionException;
-    public abstract void init(int num_branch, String dataset, String ev) throws SQLException, IoTDBConnectionException;
+    public abstract void init(int num_branch, DataSet dataset, String ev) throws SQLException, IoTDBConnectionException;
     public abstract void insert() throws SQLException;
     public abstract void insertCSV() throws SQLException, IOException;
-    public abstract void insertDataPrepare(String path, int length, double upd, double delay, double dup, int verbose) throws IOException, SQLException, IoTDBConnectionException, StatementExecutionException;
-    public abstract void insertDataPrepare_gene(int length, double upd, double delay, double dup, int verbose) throws SQLException, IoTDBConnectionException, StatementExecutionException;
+    public abstract void insertDataPrepare(String path, int length, double upd, double delay, double dup, int verbose) throws Exception;
+    public abstract void insertDataPrepare_gene(int length, double upd, double delay, double dup, int verbose) throws Exception;
     public abstract void update(List<Schema> main) throws SQLException, IoTDBConnectionException, StatementExecutionException;
     public abstract void update(Schema main) throws SQLException, IoTDBConnectionException, StatementExecutionException;
     public abstract void align(Schema tableMain1, Schema tableMain2) throws SQLException, IoTDBConnectionException, StatementExecutionException;
@@ -33,6 +33,7 @@ public abstract class benchmarks {
     public abstract void branchAlign(Schema tableMain1, Schema tableMain2) throws SQLException;
     public abstract void branchAlign(List<Schema> tableMain) throws SQLException, IoTDBConnectionException, StatementExecutionException;
 
+    public abstract void alignPartialReading(List<Schema> tableMain, int attrs) throws SQLException, IoTDBConnectionException, StatementExecutionException, IOException;
     public abstract void execute() throws Exception;
     public abstract void execute(BenchFunctions benchFunctions) throws Exception;
 }
